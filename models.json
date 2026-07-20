@@ -1,0 +1,48 @@
+{
+  "providers": [
+    {
+      "name": "openai",
+      "baseURL": "https://api.openai.com",
+      "keyEnv": "OPENAI_API_KEY"
+    },
+    {
+      "name": "local",
+      "baseURL": "http://localhost:11434",
+      "keyEnv": "LOCAL_API_KEY"
+    }
+  ],
+  "models": [
+    {
+      "name": "gpt-4o-mini",
+      "provider": "openai",
+      "costTier": "cheap",
+      "inputCostPer1K": 0.00015,
+      "outputCostPer1K": 0.0006,
+      "capabilities": ["chat", "json"]
+    },
+    {
+      "name": "gpt-4o",
+      "provider": "openai",
+      "costTier": "premium",
+      "inputCostPer1K": 0.005,
+      "outputCostPer1K": 0.015,
+      "capabilities": ["chat", "json", "vision"]
+    },
+    {
+      "name": "gpt-4.1-mini",
+      "provider": "openai",
+      "costTier": "standard",
+      "inputCostPer1K": 0.0004,
+      "outputCostPer1K": 0.0016,
+      "capabilities": ["chat", "json"]
+    },
+    {
+      "name": "llama3.1-8b",
+      "provider": "local",
+      "costTier": "cheap",
+      "inputCostPer1K": 0.0,
+      "outputCostPer1K": 0.0,
+      "capabilities": ["chat"]
+    }
+  ]
+}

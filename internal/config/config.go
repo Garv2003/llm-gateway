@@ -11,6 +11,7 @@ type Config struct {
 	Port           int
 	UpstreamURL    string
 	UpstreamAPIKey string
+	ModelsConfig   string
 }
 
 func Load() (*Config, error) {
@@ -18,6 +19,7 @@ func Load() (*Config, error) {
 		Port:           8080,
 		UpstreamURL:    "https://api.openai.com",
 		UpstreamAPIKey: os.Getenv("UPSTREAM_API_KEY"),
+		ModelsConfig:   "models.json",
 	}
 
 	if v := os.Getenv("PORT"); v != "" {
@@ -30,6 +32,10 @@ func Load() (*Config, error) {
 
 	if v := os.Getenv("UPSTREAM_URL"); v != "" {
 		cfg.UpstreamURL = v
+	}
+
+	if v := os.Getenv("MODELS_CONFIG"); v != "" {
+		cfg.ModelsConfig = v
 	}
 
 	if err := cfg.validate(); err != nil {
