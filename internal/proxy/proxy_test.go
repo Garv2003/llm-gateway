@@ -2,14 +2,18 @@ package proxy
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Garv2003/llm-gateway/internal/config"
+	"github.com/Garv2003/llm-gateway/internal/registry"
 )
 
 func TestForwardsAndInjectsKey(t *testing.T) {
@@ -24,7 +28,7 @@ func TestForwardsAndInjectsKey(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	h, err := New(&config.Config{UpstreamURL: upstream.URL, UpstreamAPIKey: "secret"})
+	h, err := New(&config.Config{UpstreamURL: upstream.URL, UpstreamAPIKey: "secret"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +59,7 @@ func TestPassthroughAuthNotOverwritten(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	h, _ := New(&config.Config{UpstreamURL: upstream.URL, UpstreamAPIKey: "secret"})
+	h, _ := New(&config.Config{UpstreamURL: upstream.URL, UpstreamAPIKey: "secret"}, nil)
 	gw := httptest.NewServer(h)
 	defer gw.Close()
 
@@ -85,7 +89,7 @@ func TestStreamsIncrementally(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	h, _ := New(&config.Config{UpstreamURL: upstream.URL})
+	h, _ := New(&config.Config{UpstreamURL: upstream.URL}, nil)
 	gw := httptest.NewServer(h)
 	defer gw.Close()
 
@@ -115,4 +119,83 @@ func TestStreamsIncrementally(t *testing.T) {
 		t.Fatal("timed out waiting for first streamed chunk before upstream finished")
 	}
 	close(release)
+}
+
+func TestRoutesByRequestedModel(t *testing.T) {
+	var gotAuth string
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		io.WriteString(w, `{"ok":true}`)
+	}))
+	defer provider.Close()
+
+	fixture := fmt.Sprintf(`{
+		"providers": [{"name": "local", "baseURL": %q, "keyEnv": "LOCAL_API_KEY"}],
+		"models": [{"name": "llama3.1-8b", "provider": "local", "costTier": "cheap"}]
+	}`, provider.URL)
+	path := filepath.Join(t.TempDir(), "models.json")
+	if err := os.WriteFile(path, []byte(fixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := registry.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("LOCAL_API_KEY", "local-secret")
+
+	// Default upstream points elsewhere; a registry model must override it.
+	h, err := New(&config.Config{UpstreamURL: "https://api.openai.com", UpstreamAPIKey: "default-key"}, reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw := httptest.NewServer(h)
+	defer gw.Close()
+
+	resp, err := http.Post(gw.URL+"/v1/chat/completions", "application/json", strings.NewReader(`{"model":"llama3.1-8b"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if string(body) != `{"ok":true}` {
+		t.Errorf("body = %q, want request routed to registry provider", string(body))
+	}
+	if gotAuth != "Bearer local-secret" {
+		t.Errorf("auth = %q, want provider key injected", gotAuth)
+	}
+}
+
+func TestUnknownModelFallsBackToDefault(t *testing.T) {
+	var hit bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		io.WriteString(w, `{"ok":true}`)
+	}))
+	defer upstream.Close()
+
+	fixture := `{"providers": [{"name": "openai", "baseURL": "https://api.openai.com", "keyEnv": "OPENAI_API_KEY"}], "models": []}`
+	path := filepath.Join(t.TempDir(), "models.json")
+	if err := os.WriteFile(path, []byte(fixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := registry.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h, _ := New(&config.Config{UpstreamURL: upstream.URL}, reg)
+	gw := httptest.NewServer(h)
+	defer gw.Close()
+
+	resp, err := http.Post(gw.URL+"/v1/chat/completions", "application/json", strings.NewReader(`{"model":"unknown-model"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if !hit {
+		t.Error("unknown model did not fall back to default upstream")
+	}
 }
