@@ -7,17 +7,23 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Garv2003/llm-gateway/internal/cache"
 	"github.com/Garv2003/llm-gateway/internal/config"
+	"github.com/Garv2003/llm-gateway/internal/ratelimit"
 	"github.com/Garv2003/llm-gateway/internal/registry"
 	"github.com/Garv2003/llm-gateway/internal/router"
 )
+
+// anonymousKey is the shared bucket used when a request carries no API key.
+const anonymousKey = "anonymous"
 
 type routeKey struct{}
 
@@ -26,10 +32,13 @@ type route struct {
 	apiKey string
 }
 
-// New builds the proxy handler. sc is optional: when non-nil (and enabled by
-// config), non-streaming chat completions are served from and populated into
-// the semantic cache. Passing nil leaves behavior unchanged.
-func New(cfg *config.Config, reg *registry.Registry, rtr *router.Router, sc *cache.SemanticCache) (http.Handler, error) {
+// New builds the proxy handler. sc and lim are optional: when non-nil (and
+// enabled by config) they add the semantic cache and per-API-key rate limiting
+// respectively. Passing nil for either leaves that behavior unchanged.
+//
+// Handler order is rate limit -> cache -> routing -> forward, so rejected
+// requests never reach the cache or an upstream.
+func New(cfg *config.Config, reg *registry.Registry, rtr *router.Router, sc *cache.SemanticCache, lim ratelimit.Limiter) (http.Handler, error) {
 	defaultTarget, err := url.Parse(cfg.UpstreamURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse upstream url: %w", err)
@@ -67,10 +76,71 @@ func New(cfg *config.Config, reg *registry.Registry, rtr *router.Router, sc *cac
 		forward = routingHandler(rp, reg, rtr)
 	}
 
-	if sc == nil {
-		return forward, nil
+	handler := forward
+	if sc != nil {
+		handler = cacheHandler(sc, handler)
 	}
-	return cacheHandler(sc, forward), nil
+	if lim != nil {
+		handler = rateLimitHandler(lim, handler)
+	}
+	return handler, nil
+}
+
+// rateLimitHandler enforces a per-API-key limit before any request reaches the
+// cache or an upstream. The key is taken from the Authorization: Bearer <key>
+// header, falling back to X-API-Key; requests with neither share a single
+// "anonymous" bucket. On denial it returns 429 with a Retry-After header and an
+// OpenAI-style JSON error body.
+func rateLimitHandler(lim ratelimit.Limiter, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := apiKey(r)
+
+		allowed, retryAfter, err := lim.Allow(r.Context(), key)
+		if err != nil {
+			log.Printf("ratelimit: backend error, allowing request: %v", err)
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !allowed {
+			writeRateLimited(w, retryAfter)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// apiKey extracts the caller's key from the Authorization bearer token, or the
+// X-API-Key header, returning anonymousKey when neither is present.
+func apiKey(r *http.Request) string {
+	if auth := r.Header.Get("Authorization"); auth != "" {
+		if token := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer ")); token != "" && token != auth {
+			return token
+		}
+	}
+	if k := strings.TrimSpace(r.Header.Get("X-API-Key")); k != "" {
+		return k
+	}
+	return anonymousKey
+}
+
+// writeRateLimited emits a 429 with a Retry-After header (rounded up to whole
+// seconds) and an OpenAI-style error body.
+func writeRateLimited(w http.ResponseWriter, retryAfter time.Duration) {
+	secs := int(math.Ceil(retryAfter.Seconds()))
+	if secs < 1 {
+		secs = 1
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	w.WriteHeader(http.StatusTooManyRequests)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error": map[string]any{
+			"message": "Rate limit exceeded. Retry after " + strconv.Itoa(secs) + "s.",
+			"type":    "rate_limit_exceeded",
+			"code":    "rate_limit_exceeded",
+			"param":   nil,
+		},
+	})
 }
 
 // routingHandler resolves the provider route for each request and, when a

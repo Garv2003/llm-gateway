@@ -33,7 +33,7 @@ func TestCacheServesSecondRequestWithoutUpstream(t *testing.T) {
 	defer upstream.Close()
 
 	sc := cache.New(staticEmbedder{}, 0.95, time.Hour, 0)
-	h, err := New(&config.Config{UpstreamURL: upstream.URL}, nil, nil, sc)
+	h, err := New(&config.Config{UpstreamURL: upstream.URL}, nil, nil, sc, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestStreamingBypassesCache(t *testing.T) {
 	defer upstream.Close()
 
 	sc := cache.New(staticEmbedder{}, 0.95, time.Hour, 0)
-	h, _ := New(&config.Config{UpstreamURL: upstream.URL}, nil, nil, sc)
+	h, _ := New(&config.Config{UpstreamURL: upstream.URL}, nil, nil, sc, nil)
 	gw := httptest.NewServer(h)
 	defer gw.Close()
 

@@ -22,6 +22,10 @@ type Config struct {
 	EmbeddingsURL   string
 	EmbeddingsKey   string
 	EmbeddingsModel string
+
+	RateLimitEnabled bool
+	RateLimitRPS     float64
+	RateLimitBurst   int
 }
 
 func Load() (*Config, error) {
@@ -39,6 +43,10 @@ func Load() (*Config, error) {
 		EmbeddingsURL:   os.Getenv("EMBEDDINGS_URL"),
 		EmbeddingsKey:   os.Getenv("EMBEDDINGS_API_KEY"),
 		EmbeddingsModel: os.Getenv("EMBEDDINGS_MODEL"),
+
+		RateLimitEnabled: false,
+		RateLimitRPS:     10,
+		RateLimitBurst:   20,
 	}
 
 	if v := os.Getenv("PORT"); v != "" {
@@ -89,6 +97,30 @@ func Load() (*Config, error) {
 		cfg.CacheMaxEntries = max
 	}
 
+	if v := os.Getenv("RATE_LIMIT_ENABLED"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid RATE_LIMIT_ENABLED %q: %w", v, err)
+		}
+		cfg.RateLimitEnabled = enabled
+	}
+
+	if v := os.Getenv("RATE_LIMIT_RPS"); v != "" {
+		rps, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid RATE_LIMIT_RPS %q: %w", v, err)
+		}
+		cfg.RateLimitRPS = rps
+	}
+
+	if v := os.Getenv("RATE_LIMIT_BURST"); v != "" {
+		burst, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid RATE_LIMIT_BURST %q: %w", v, err)
+		}
+		cfg.RateLimitBurst = burst
+	}
+
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
@@ -118,6 +150,15 @@ func (c *Config) validate() error {
 
 	if c.CacheEnabled && c.EmbeddingsURL == "" {
 		return fmt.Errorf("CACHE_ENABLED requires EMBEDDINGS_URL")
+	}
+
+	if c.RateLimitEnabled {
+		if c.RateLimitRPS <= 0 {
+			return fmt.Errorf("RATE_LIMIT_RPS must be > 0 when RATE_LIMIT_ENABLED, got %v", c.RateLimitRPS)
+		}
+		if c.RateLimitBurst < 1 {
+			return fmt.Errorf("RATE_LIMIT_BURST must be >= 1 when RATE_LIMIT_ENABLED, got %d", c.RateLimitBurst)
+		}
 	}
 
 	return nil
