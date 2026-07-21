@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/Garv2003/llm-gateway/internal/cache"
 	"github.com/Garv2003/llm-gateway/internal/config"
 	"github.com/Garv2003/llm-gateway/internal/proxy"
 	"github.com/Garv2003/llm-gateway/internal/registry"
@@ -25,7 +26,14 @@ func main() {
 
 	rtr := router.New(reg, nil)
 
-	p, err := proxy.New(cfg, reg, rtr)
+	var sc *cache.SemanticCache
+	if cfg.CacheEnabled {
+		emb := cache.NewAPIEmbedder(cfg.EmbeddingsURL, cfg.EmbeddingsKey, cfg.EmbeddingsModel)
+		sc = cache.New(emb, cfg.CacheThreshold, cfg.CacheTTL, cfg.CacheMaxEntries)
+		log.Printf("semantic cache enabled (threshold=%.2f ttl=%s model=%s)", cfg.CacheThreshold, cfg.CacheTTL, cfg.EmbeddingsModel)
+	}
+
+	p, err := proxy.New(cfg, reg, rtr, sc)
 	if err != nil {
 		log.Fatalf("proxy: %v", err)
 	}
