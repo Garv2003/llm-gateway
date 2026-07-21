@@ -8,6 +8,7 @@ import (
 	"github.com/Garv2003/llm-gateway/internal/config"
 	"github.com/Garv2003/llm-gateway/internal/proxy"
 	"github.com/Garv2003/llm-gateway/internal/registry"
+	"github.com/Garv2003/llm-gateway/internal/router"
 )
 
 func main() {
@@ -22,7 +23,9 @@ func main() {
 	}
 	log.Printf("loaded model registry from %s", cfg.ModelsConfig)
 
-	p, err := proxy.New(cfg, reg)
+	rtr := router.New(reg, nil)
+
+	p, err := proxy.New(cfg, reg, rtr)
 	if err != nil {
 		log.Fatalf("proxy: %v", err)
 	}
