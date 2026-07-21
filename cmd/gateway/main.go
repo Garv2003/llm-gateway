@@ -8,6 +8,7 @@ import (
 	"github.com/Garv2003/llm-gateway/internal/cache"
 	"github.com/Garv2003/llm-gateway/internal/config"
 	"github.com/Garv2003/llm-gateway/internal/proxy"
+	"github.com/Garv2003/llm-gateway/internal/ratelimit"
 	"github.com/Garv2003/llm-gateway/internal/registry"
 	"github.com/Garv2003/llm-gateway/internal/router"
 )
@@ -33,7 +34,13 @@ func main() {
 		log.Printf("semantic cache enabled (threshold=%.2f ttl=%s model=%s)", cfg.CacheThreshold, cfg.CacheTTL, cfg.EmbeddingsModel)
 	}
 
-	p, err := proxy.New(cfg, reg, rtr, sc)
+	var lim ratelimit.Limiter
+	if cfg.RateLimitEnabled {
+		lim = ratelimit.NewLocal(cfg.RateLimitRPS, cfg.RateLimitBurst)
+		log.Printf("rate limiting enabled (rps=%.1f burst=%d, local token bucket)", cfg.RateLimitRPS, cfg.RateLimitBurst)
+	}
+
+	p, err := proxy.New(cfg, reg, rtr, sc, lim)
 	if err != nil {
 		log.Fatalf("proxy: %v", err)
 	}

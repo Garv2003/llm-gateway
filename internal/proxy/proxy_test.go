@@ -29,7 +29,7 @@ func TestForwardsAndInjectsKey(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	h, err := New(&config.Config{UpstreamURL: upstream.URL, UpstreamAPIKey: "secret"}, nil, nil, nil)
+	h, err := New(&config.Config{UpstreamURL: upstream.URL, UpstreamAPIKey: "secret"}, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestPassthroughAuthNotOverwritten(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	h, _ := New(&config.Config{UpstreamURL: upstream.URL, UpstreamAPIKey: "secret"}, nil, nil, nil)
+	h, _ := New(&config.Config{UpstreamURL: upstream.URL, UpstreamAPIKey: "secret"}, nil, nil, nil, nil)
 	gw := httptest.NewServer(h)
 	defer gw.Close()
 
@@ -90,7 +90,7 @@ func TestStreamsIncrementally(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	h, _ := New(&config.Config{UpstreamURL: upstream.URL}, nil, nil, nil)
+	h, _ := New(&config.Config{UpstreamURL: upstream.URL}, nil, nil, nil, nil)
 	gw := httptest.NewServer(h)
 	defer gw.Close()
 
@@ -146,7 +146,7 @@ func TestRoutesByRequestedModel(t *testing.T) {
 	t.Setenv("LOCAL_API_KEY", "local-secret")
 
 	// Default upstream points elsewhere; a registry model must override it.
-	h, err := New(&config.Config{UpstreamURL: "https://api.openai.com", UpstreamAPIKey: "default-key"}, reg, nil, nil)
+	h, err := New(&config.Config{UpstreamURL: "https://api.openai.com", UpstreamAPIKey: "default-key"}, reg, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestUnknownModelFallsBackToDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h, _ := New(&config.Config{UpstreamURL: upstream.URL}, reg, nil, nil)
+	h, _ := New(&config.Config{UpstreamURL: upstream.URL}, reg, nil, nil, nil)
 	gw := httptest.NewServer(h)
 	defer gw.Close()
 
@@ -235,7 +235,7 @@ func TestAutoRouteRetriesFallbackOn5xx(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h, err := New(&config.Config{UpstreamURL: "https://api.openai.com"}, reg, router.New(reg, nil), nil)
+	h, err := New(&config.Config{UpstreamURL: "https://api.openai.com"}, reg, router.New(reg, nil), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
