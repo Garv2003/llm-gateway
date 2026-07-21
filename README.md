@@ -36,6 +36,11 @@ client ──/v1/chat/completions──▶  gateway
   [`distributed-rate-limiter`](https://github.com/Garv2003/distributed-rate-limiter).
 - **M5 — metrics + proof.** Prometheus (`cost_saved`, latency histogram, cache-hit rate, model mix) +
   Grafana; a benchmark that reports **% cost cut at equal quality** on a sample workload.
+  An offline cost benchmark ships in [`bench/cost/`](bench/cost/): it replays a workload through
+  the real router and prices it against the registry, reporting an **estimated 98.3% routing cost
+  reduction** on the bundled 19-prompt sample (offline estimate from registry pricing × token
+  heuristics — not a live-API measurement; see the [bench README](bench/cost/README.md)).
+  Run it with `go run ./bench/cost`.
 
 ## Tech stack
 
