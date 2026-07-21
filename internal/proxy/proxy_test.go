@@ -14,6 +14,7 @@ import (
 
 	"github.com/Garv2003/llm-gateway/internal/config"
 	"github.com/Garv2003/llm-gateway/internal/registry"
+	"github.com/Garv2003/llm-gateway/internal/router"
 )
 
 func TestForwardsAndInjectsKey(t *testing.T) {
@@ -28,7 +29,7 @@ func TestForwardsAndInjectsKey(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	h, err := New(&config.Config{UpstreamURL: upstream.URL, UpstreamAPIKey: "secret"}, nil)
+	h, err := New(&config.Config{UpstreamURL: upstream.URL, UpstreamAPIKey: "secret"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +60,7 @@ func TestPassthroughAuthNotOverwritten(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	h, _ := New(&config.Config{UpstreamURL: upstream.URL, UpstreamAPIKey: "secret"}, nil)
+	h, _ := New(&config.Config{UpstreamURL: upstream.URL, UpstreamAPIKey: "secret"}, nil, nil)
 	gw := httptest.NewServer(h)
 	defer gw.Close()
 
@@ -89,7 +90,7 @@ func TestStreamsIncrementally(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	h, _ := New(&config.Config{UpstreamURL: upstream.URL}, nil)
+	h, _ := New(&config.Config{UpstreamURL: upstream.URL}, nil, nil)
 	gw := httptest.NewServer(h)
 	defer gw.Close()
 
@@ -145,7 +146,7 @@ func TestRoutesByRequestedModel(t *testing.T) {
 	t.Setenv("LOCAL_API_KEY", "local-secret")
 
 	// Default upstream points elsewhere; a registry model must override it.
-	h, err := New(&config.Config{UpstreamURL: "https://api.openai.com", UpstreamAPIKey: "default-key"}, reg)
+	h, err := New(&config.Config{UpstreamURL: "https://api.openai.com", UpstreamAPIKey: "default-key"}, reg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +186,7 @@ func TestUnknownModelFallsBackToDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h, _ := New(&config.Config{UpstreamURL: upstream.URL}, reg)
+	h, _ := New(&config.Config{UpstreamURL: upstream.URL}, reg, nil)
 	gw := httptest.NewServer(h)
 	defer gw.Close()
 
@@ -197,5 +198,70 @@ func TestUnknownModelFallsBackToDefault(t *testing.T) {
 
 	if !hit {
 		t.Error("unknown model did not fall back to default upstream")
+	}
+}
+
+func TestAutoRouteRetriesFallbackOn5xx(t *testing.T) {
+	var primaryHits, fallbackHits int
+
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		primaryHits++
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer primary.Close()
+
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackHits++
+		io.WriteString(w, `{"ok":"fallback"}`)
+	}))
+	defer fallback.Close()
+
+	fixture := fmt.Sprintf(`{
+		"providers": [
+			{"name": "cheapp", "baseURL": %q, "keyEnv": "CHEAP_KEY"},
+			{"name": "strongp", "baseURL": %q, "keyEnv": "STRONG_KEY"}
+		],
+		"models": [
+			{"name": "cheap-model", "provider": "cheapp", "costTier": "cheap"},
+			{"name": "strong-model", "provider": "strongp", "costTier": "premium"}
+		]
+	}`, primary.URL, fallback.URL)
+	path := filepath.Join(t.TempDir(), "models.json")
+	if err := os.WriteFile(path, []byte(fixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := registry.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h, err := New(&config.Config{UpstreamURL: "https://api.openai.com"}, reg, router.New(reg, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw := httptest.NewServer(h)
+	defer gw.Close()
+
+	// "auto" + an easy prompt routes to the cheap tier first; its 500 must
+	// trigger a single retry against the premium fallback provider.
+	resp, err := http.Post(gw.URL+"/v1/chat/completions", "application/json",
+		strings.NewReader(`{"model":"auto","messages":[{"role":"user","content":"hi"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200 after fallback", resp.StatusCode)
+	}
+	if string(body) != `{"ok":"fallback"}` {
+		t.Errorf("body = %q, want fallback provider response", string(body))
+	}
+	if primaryHits != 1 {
+		t.Errorf("primary hits = %d, want 1", primaryHits)
+	}
+	if fallbackHits != 1 {
+		t.Errorf("fallback hits = %d, want 1 (retried exactly once)", fallbackHits)
 	}
 }

@@ -72,6 +72,14 @@ func (r *Registry) Model(name string) (Model, bool) {
 	return m, ok
 }
 
+func (r *Registry) Models() []Model {
+	out := make([]Model, 0, len(r.models))
+	for _, m := range r.models {
+		out = append(out, m)
+	}
+	return out
+}
+
 func (r *Registry) Provider(name string) (Provider, bool) {
 	p, ok := r.providers[name]
 	return p, ok
