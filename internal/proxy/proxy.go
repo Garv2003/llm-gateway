@@ -11,7 +11,9 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"time"
 
+	"github.com/Garv2003/llm-gateway/internal/cache"
 	"github.com/Garv2003/llm-gateway/internal/config"
 	"github.com/Garv2003/llm-gateway/internal/registry"
 	"github.com/Garv2003/llm-gateway/internal/router"
@@ -24,7 +26,10 @@ type route struct {
 	apiKey string
 }
 
-func New(cfg *config.Config, reg *registry.Registry, rtr *router.Router) (http.Handler, error) {
+// New builds the proxy handler. sc is optional: when non-nil (and enabled by
+// config), non-streaming chat completions are served from and populated into
+// the semantic cache. Passing nil leaves behavior unchanged.
+func New(cfg *config.Config, reg *registry.Registry, rtr *router.Router, sc *cache.SemanticCache) (http.Handler, error) {
 	defaultTarget, err := url.Parse(cfg.UpstreamURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse upstream url: %w", err)
@@ -57,10 +62,20 @@ func New(cfg *config.Config, reg *registry.Registry, rtr *router.Router) (http.H
 		},
 	}
 
-	if reg == nil {
-		return rp, nil
+	var forward http.Handler = rp
+	if reg != nil {
+		forward = routingHandler(rp, reg, rtr)
 	}
 
+	if sc == nil {
+		return forward, nil
+	}
+	return cacheHandler(sc, forward), nil
+}
+
+// routingHandler resolves the provider route for each request and, when a
+// fallback exists, retries once on a 5xx upstream response.
+func routingHandler(rp *httputil.ReverseProxy, reg *registry.Registry, rtr *router.Router) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body := drainBody(r)
 
@@ -92,7 +107,7 @@ func New(cfg *config.Config, reg *registry.Registry, rtr *router.Router) (http.H
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		r = r.WithContext(context.WithValue(r.Context(), routeKey{}, fallback))
 		rp.ServeHTTP(w, r)
-	}), nil
+	})
 }
 
 // drainBody reads and restores the request body so it can be peeked and, on
@@ -231,4 +246,124 @@ func (b *interceptor) commit() {
 		b.rw.Write(b.buf.Bytes())
 		b.buf.Reset()
 	}
+}
+
+// cacheHandler wraps the forwarding handler with the semantic cache.
+//
+// Streaming requests (stream: true) bypass the cache entirely: serving or
+// populating the cache would require reassembling a completion from the SSE
+// stream, which means buffering the whole response server-side. That defeats
+// incremental token delivery and can pin large responses in memory, so
+// streamed requests are always forwarded straight through.
+func cacheHandler(sc *cache.SemanticCache, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := drainBody(r)
+
+		var meta struct {
+			Stream bool   `json:"stream"`
+			Model  string `json:"model"`
+		}
+		_ = json.Unmarshal(body, &meta)
+
+		if meta.Stream || len(body) == 0 {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		prompt := router.ExtractPrompt(body).Text
+		if strings.TrimSpace(prompt) == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if completion, hit, err := sc.Lookup(r.Context(), prompt); err != nil {
+			log.Printf("cache: lookup error: %v", err)
+		} else if hit {
+			writeCachedCompletion(w, meta.Model, completion)
+			return
+		}
+
+		// Miss: forward and capture the response so a complete, successful,
+		// non-streamed completion can be stored for next time.
+		cw := &captureWriter{ResponseWriter: w}
+		next.ServeHTTP(cw, r)
+
+		status := cw.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		if status < 200 || status >= 300 {
+			return
+		}
+		if completion, ok := extractCompletion(cw.body.Bytes()); ok && completion != "" {
+			if err := sc.Store(r.Context(), prompt, completion); err != nil {
+				log.Printf("cache: store error: %v", err)
+			}
+		}
+	})
+}
+
+// captureWriter passes writes through to the client while recording the status
+// and body so the proxy can inspect a completed response.
+type captureWriter struct {
+	http.ResponseWriter
+	status int
+	body   bytes.Buffer
+}
+
+func (c *captureWriter) WriteHeader(code int) {
+	if c.status == 0 {
+		c.status = code
+	}
+	c.ResponseWriter.WriteHeader(code)
+}
+
+func (c *captureWriter) Write(p []byte) (int, error) {
+	if c.status == 0 {
+		c.status = http.StatusOK
+	}
+	c.body.Write(p)
+	return c.ResponseWriter.Write(p)
+}
+
+// writeCachedCompletion emits a well-formed OpenAI chat-completion response
+// carrying the cached content.
+func writeCachedCompletion(w http.ResponseWriter, model, completion string) {
+	if model == "" {
+		model = "cached"
+	}
+	resp := map[string]any{
+		"id":      fmt.Sprintf("chatcmpl-cache-%d", time.Now().UnixNano()),
+		"object":  "chat.completion",
+		"created": time.Now().Unix(),
+		"model":   model,
+		"choices": []map[string]any{{
+			"index":         0,
+			"message":       map[string]any{"role": "assistant", "content": completion},
+			"finish_reason": "stop",
+		}},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Cache", "HIT")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// extractCompletion pulls the assistant content from an OpenAI chat-completion
+// response body.
+func extractCompletion(body []byte) (string, bool) {
+	var resp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return "", false
+	}
+	if len(resp.Choices) == 0 {
+		return "", false
+	}
+	return resp.Choices[0].Message.Content, true
 }
