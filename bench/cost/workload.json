@@ -1,0 +1,25 @@
+[
+  { "name": "greeting", "prompt": "hi there" },
+  { "name": "capital", "prompt": "What is the capital of France?" },
+  { "name": "define", "prompt": "Define the word 'ephemeral' in one sentence." },
+  { "name": "units", "prompt": "Convert 10 kilometers to miles." },
+  { "name": "spelling", "prompt": "Is it 'accommodate' or 'accomodate'?" },
+  { "name": "quick-fact", "prompt": "How many days are in a leap year?" },
+  { "name": "translate", "prompt": "Translate 'good morning' into Spanish." },
+  { "name": "list", "prompt": "List three primary colors." },
+
+  { "name": "code-fix", "prompt": "Debug this function, it returns nil unexpectedly:\n```go\nfunc find(xs []int, t int) int {\n  for i := range xs { if xs[i]==t { return i } }\n  return 0\n}\n```" },
+  { "name": "code-explain", "prompt": "Explain why this SQL query is slow and how to optimize it: SELECT * FROM orders o JOIN users u ON u.id=o.user_id WHERE o.created_at > now() - interval '30 days' ORDER BY o.total DESC." },
+  { "name": "refactor", "prompt": "Refactor this Python code to be more idiomatic and add error handling:\n```python\ndef read(f):\n  x = open(f)\n  d = x.read()\n  return d\n```" },
+  { "name": "algorithm", "prompt": "Design an algorithm to find the k-th smallest element in an unsorted array in better than O(n log n) time, and analyze its complexity." },
+
+  { "name": "reasoning-proof", "prompt": "Prove step by step that the square root of 2 is irrational." },
+  { "name": "reasoning-tradeoff", "prompt": "Analyze the trade-off between using a message queue versus direct RPC for a payment service, and explain why you would choose one over the other under high load." },
+  { "name": "reasoning-derive", "prompt": "Derive the closed-form solution for linear regression using ordinary least squares, showing each step of the matrix calculus." },
+
+  { "name": "json-extract", "prompt": "Extract the person's name, age, and city from this text and return it as JSON: 'Maria is 34 and lives in Lisbon.'", "json": true },
+  { "name": "json-schema", "prompt": "Given the schema {\"title\":\"string\",\"tags\":[\"string\"]}, produce structured output for a blog post about gardening.", "json": true },
+
+  { "name": "long-summary", "prompt": "Summarize the following report. Our quarterly revenue grew 12% year over year driven primarily by expansion in the enterprise segment, though small-business churn increased to 4.2% amid pricing changes. Gross margin held steady at 71% as infrastructure efficiency gains offset higher support costs. We shipped 3 major features and 47 improvements. Customer satisfaction (CSAT) rose from 4.1 to 4.4. Headcount grew from 210 to 245, with most hiring in engineering and customer success. Cash runway remains 26 months. Looking ahead, we plan to invest in international expansion, deepen the partner ecosystem, and reduce onboarding time from 14 days to under 7. Key risks include competitive pricing pressure, currency volatility in EU markets, and dependency on a single cloud provider. We recommend prioritizing multi-cloud readiness and a revamped small-business retention program in the next two quarters.", "messages": 2 },
+  { "name": "multi-turn", "prompt": "Continue the conversation and recommend next steps for the migration project discussed above, considering the constraints we agreed on earlier.", "messages": 6 }
+]
